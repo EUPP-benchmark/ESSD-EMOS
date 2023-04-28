@@ -41,9 +41,6 @@ data_obs_trai <- ncvar_get(obs_trai, varid = "t2m")
 lt_obs_trai<- ncvar_get(obs_trai, varid = "step")
 nc_close(obs_trai)
 
-### One Station is left out because a few lead times have almost no data
-station_id_fc_test <- station_id_fc_test[-which(station_id_fc_test == 6785)]
-
 
 ### Loop over stations
 for(st in station_id_fc_test){
@@ -101,39 +98,42 @@ for(st in station_id_fc_test){
     ### Using only data for trainig before 2017-01-01
     trai <- trai[which(index(trai) < as.POSIXct('2017-01-01')),]
     
-    trai$obs <- trai$obs - 273.15
-    test$obs <- test$obs - 273.15
-    trai$ens.mu <- trai$ens.mu - 273.15
-    test$ens.mu <- test$ens.mu - 273.15
+    ### One Station has a few lead times with no data, therefore this if()
+    if(nrow(trai) >= 30){
+      trai$obs <- trai$obs - 273.15
+      test$obs <- test$obs - 273.15
+      trai$ens.mu <- trai$ens.mu - 273.15
+      test$ens.mu <- test$ens.mu - 273.15
+      
+      ### Adding sine and cosine for day of the year to capture seasonality    
+      yday <- as.POSIXlt(index(trai))$yday
+      trai$sin.y1 <- sin(2 * pi * yday / 365)
+      trai$cos.y1 <- cos(2 * pi * yday / 365)
+      trai$sin.y2 <- sin(4 * pi * yday / 365)
+      trai$cos.y2 <- cos(4 * pi * yday / 365)
+      
+      ### Fitting EMOS
+      fit <- crch(obs ~ ens.mu + sin.y1 + cos.y1 + sin.y2 + cos.y2 | 
+                    log(ens.sd) + sin.y1 + cos.y1 + sin.y2 + cos.y2, data = trai)
+      
+      ### Predicting 
+      test <- na.omit(test)
+      yday <- as.POSIXlt(index(test))$yday
+      test$sin.y1 <- sin(2 * pi * yday / 365)
+      test$cos.y1 <- cos(2 * pi * yday / 365)
+      test$sin.y2 <- sin(4 * pi * yday / 365)
+      test$cos.y2 <- cos(4 * pi * yday / 365)
+      
+      test$fc <- predict(fit, newdata = test)
+      test$sd <- predict(fit, newdata = test, type = 'scale')
+      
+      
+      test.all <- rbind(test.all, data.frame(test))
+    }  
     
-    ### Adding sine and cosine for day of the year to capture seasonality    
-    yday <- as.POSIXlt(index(trai))$yday
-    trai$sin.y1 <- sin(2 * pi * yday / 365)
-    trai$cos.y1 <- cos(2 * pi * yday / 365)
-    trai$sin.y2 <- sin(4 * pi * yday / 365)
-    trai$cos.y2 <- cos(4 * pi * yday / 365)
+    test <- test.all
+    print(mean(abs(test$obs - test$fc)))
     
-    ### Fitting EMOS
-    fit <- crch(obs ~ ens.mu + sin.y1 + cos.y1 + sin.y2 + cos.y2 | 
-                  log(ens.sd) + sin.y1 + cos.y1 + sin.y2 + cos.y2, data = trai)
-    
-    ### Predicting 
-    test <- na.omit(test)
-    yday <- as.POSIXlt(index(test))$yday
-    test$sin.y1 <- sin(2 * pi * yday / 365)
-    test$cos.y1 <- cos(2 * pi * yday / 365)
-    test$sin.y2 <- sin(4 * pi * yday / 365)
-    test$cos.y2 <- cos(4 * pi * yday / 365)
-    
-    test$fc <- predict(fit, newdata = test)
-    test$sd <- predict(fit, newdata = test, type = 'scale')
-    
-    
-    test.all <- rbind(test.all, data.frame(test))
-  }  
-  
-  test <- test.all
-  print(mean(abs(test$obs - test$fc)))
-
-  save(test, file = save.file, version = 2)
-}
+    save(test, file = save.file, version = 2)
+  }
+}  
